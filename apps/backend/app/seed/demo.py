@@ -9,6 +9,8 @@ Scenarios included (see README "Demo scenario"):
   * Energy stream: waste heat -> process heating
   * Semantic-only candidate needing manual review (unlinked furnace residue)
   * A completed exchange with impact records (FreshHarvest -> BioUrja) and a pending connection (Shakti -> ABC)
+  * Processing pathways: ABC slag -> Processor X (ageing+crushing+screening) -> XYZ processed aggregate (viable),
+    Micro Crushers (capacity insufficient), Nagpur Slag Works (distance makes economics weak)
 Demo accounts share the password from SEED_DEMO_PASSWORD.
 """
 
@@ -102,7 +104,23 @@ ORGS: list[OrgSeed] = [
                      processing_capabilities=["crushing", "screening"], virgin_material_price_per_unit=900,
                      constraints=[_limit("free_lime_pct", hi=4), _limit("moisture_pct", hi=10, importance="PREFERRED")],
                      until=TODAY + timedelta(days=300)),
+                # Processed-material intent: raw BOF slag (free lime 2.5 %) cannot meet this directly;
+                # the ageing + crushing + screening pathway can (demo scenario).
+                dict(material="Processed Slag Aggregate", application="road_subbase",
+                     name="Processed slag aggregate 0-40 mm (expressway package)",
+                     description="Graded, volume-stable aggregate delivered ready to lay. No processing on site.",
+                     quantity_required=1500, frequency="MONTH", virgin_material_price_per_unit=900,
+                     constraints=[_limit("free_lime_pct", hi=1), _limit("particle_size_mm", hi=40),
+                                  _limit("moisture_pct", hi=8, importance="PREFERRED")],
+                     until=TODAY + timedelta(days=365)),
             ]),
+    # --- Processors (demo): same Organization model, plus ProcessorCapability rows (see PROCESSORS) ---
+    OrgSeed("processorx", "Processor X", "Slag processing", "BOTH", "Talegaon MIDC, Pune", "Maharashtra",
+            18.7350, 73.6750, "DEMO processor: slag weathering yard with crushing and screening line.", ("Karan", "Shetty")),
+    OrgSeed("microcrush", "Micro Crushers Pimpri", "Slag processing", "BOTH", "Pimpri, Pune", "Maharashtra",
+            18.6200, 73.8100, "DEMO processor: small crushing unit with limited spare capacity.", ("Ajay", "Kadam")),
+    OrgSeed("nagpurslag", "Nagpur Slag Works", "Slag processing", "BOTH", "Nagpur", "Maharashtra",
+            21.1458, 79.0882, "DEMO processor: large slag yard, far from western Maharashtra.", ("Rekha", "Bhoyar")),
     OrgSeed("shakti", "Shakti Cement", "Cement", "DEMANDER", "Ahmednagar", "Maharashtra", 19.0948, 74.7480,
             "Cement plant producing PPC and PSC.", ("Anita", "Joshi"),
             requirements=[
@@ -366,9 +384,34 @@ def seed_journeys(db: Session, orgs_by_key: dict[str, tuple[User, Organization]]
                                        "Your GBFS looks suitable for our PSC line. Can we discuss volumes?")
 
 
+# key, method, capacity, available, cost per tonne (demo), max input distance km
+PROCESSORS = [
+    ("processorx", "slag_ageing_crushing_screening", 3000, 2200, 180, 150),   # viable
+    ("microcrush", "slag_ageing_crushing_screening", 400, 200, 170, 100),     # capacity insufficient
+    ("nagpurslag", "slag_ageing_crushing_screening", 6000, 4000, 160, None),  # distance makes economics weak
+]
+
+
+def seed_processors(db: Session, orgs_by_key: dict[str, tuple[User, Organization]]) -> None:
+    from app.pathways.models import ProcessingMethod, ProcessorCapability
+
+    for key, method_key, capacity, available, cost, max_km in PROCESSORS:
+        _user, org = orgs_by_key[key]
+        method = db.scalars(select(ProcessingMethod).where(ProcessingMethod.key == method_key)).first()
+        if method is None or db.scalars(select(ProcessorCapability).where(
+                ProcessorCapability.organization_id == org.id, ProcessorCapability.method_id == method.id)).first():
+            continue
+        db.add(ProcessorCapability(organization_id=org.id, facility_id=org.facilities[0].id, method_id=method.id,
+                                   capacity_per_month=capacity, available_capacity_per_month=available,
+                                   processing_cost_per_tonne=cost, cost_is_demo=True, max_input_distance_km=max_km,
+                                   notes="Demo processor capability (hackathon data)."))
+    db.commit()
+
+
 def seed_demo(db: Session) -> dict[str, int]:
     seed_admin(db)
     orgs_by_key = seed_organizations(db)
+    seed_processors(db, orgs_by_key)
     seed_expired_listing(db, orgs_by_key["vidarbha"])
     seed_journeys(db, orgs_by_key)
     return {

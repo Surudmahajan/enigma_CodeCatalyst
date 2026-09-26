@@ -24,6 +24,7 @@ from app.matching.router import router as matching_router
 from app.messaging.router import router as messaging_router
 from app.notifications import handlers as notification_handlers
 from app.notifications.router import router as notifications_router
+from app.pathways.router import router as pathways_router
 from app.organizations.router import facilities_router
 from app.organizations.router import router as organizations_router
 from app.requirements.router import router as requirements_router
@@ -76,7 +77,7 @@ def health() -> dict[str, str]:
 for router in (auth_router, users_router, organizations_router, facilities_router, materials_router,
                resources_router, requirements_router, matching_router, connections_router, messaging_router,
                documents_router, exchanges_router, notifications_router, analytics_router, admin_router,
-               ai_router):
+               ai_router, pathways_router):
     api.include_router(router)
 
 app.include_router(api)

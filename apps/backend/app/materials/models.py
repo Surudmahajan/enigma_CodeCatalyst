@@ -43,6 +43,9 @@ class Material(UUIDPrimaryKey, Timestamps, Base):
     # Alternative trade names used for classification and search ("GBFS", "BF slag" ...)
     synonyms: Mapped[list[str]] = mapped_column(JSONType, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # True for products of a processing method (e.g. graded slag aggregate). Lets a Requirement
+    # express "raw material" vs "processed material" through the material it references.
+    is_processed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     properties = relationship("MaterialProperty", back_populates="material", lazy="selectin",
                               cascade="all, delete-orphan")

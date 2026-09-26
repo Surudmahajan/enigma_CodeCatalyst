@@ -38,6 +38,7 @@ class MaterialSummary(BaseModel):
     category: str
     subcategory: str | None
     physical_state: PhysicalState
+    is_processed: bool = False
 
 
 class MaterialOut(MaterialSummary):

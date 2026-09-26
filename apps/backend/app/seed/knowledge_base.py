@@ -225,3 +225,7 @@ def seed_knowledge_base(db: Session) -> None:
         link.source_note = SCREENING if rules else None
         db.add(link)
     db.commit()
+
+    from app.seed.processing import seed_processing_knowledge  # processed products depend on the base catalogue
+
+    seed_processing_knowledge(db)

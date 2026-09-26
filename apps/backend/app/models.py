@@ -19,6 +19,7 @@ from app.matching.models import Match, MatchingConfig  # noqa: F401
 from app.messaging.models import Conversation, ConversationParticipant, Message, ReadReceipt  # noqa: F401
 from app.notifications.models import Notification, PushToken  # noqa: F401
 from app.organizations.models import Facility, Location, Organization, OrganizationMember  # noqa: F401
+from app.pathways.models import ProcessingMethod, ProcessorCapability  # noqa: F401
 from app.requirements.models import Requirement, RequirementPropertyConstraint  # noqa: F401
 from app.resources.models import Resource, ResourcePropertyValue  # noqa: F401
 from app.users.models import User  # noqa: F401
