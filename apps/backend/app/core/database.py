@@ -8,8 +8,9 @@ development and the test suite; all models use portable column types
 import uuid
 from collections.abc import Iterator
 from datetime import datetime
+from enum import StrEnum
 
-from sqlalchemy import JSON, DateTime, MetaData, Uuid, create_engine, event
+from sqlalchemy import JSON, DateTime, Enum, MetaData, Uuid, create_engine, event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -28,6 +29,11 @@ NAMING_CONVENTION = {
 
 # JSONB on PostgreSQL, plain JSON elsewhere.
 JSONType = JSON().with_variant(JSONB(), "postgresql")
+
+
+def str_enum(enum_cls: type[StrEnum]) -> Enum:
+    """Enum column stored as VARCHAR + CHECK: portable and easy to extend via migration."""
+    return Enum(enum_cls, native_enum=False, length=32, validate_strings=True)
 
 
 class Base(DeclarativeBase):

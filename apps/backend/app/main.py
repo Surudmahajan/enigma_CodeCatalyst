@@ -5,10 +5,18 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import models as _models  # noqa: F401  (registers every ORM model)
+from app.auth.router import router as auth_router
 from app.core import jobs
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.core.logging import RequestContextMiddleware, configure_logging
+from app.materials.router import router as materials_router
+from app.organizations.router import facilities_router
+from app.organizations.router import router as organizations_router
+from app.requirements.router import router as requirements_router
+from app.resources.router import router as resources_router
+from app.users.router import router as users_router
 
 settings = get_settings()
 
@@ -49,5 +57,9 @@ api = APIRouter(prefix=settings.api_prefix)
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
+
+for router in (auth_router, users_router, organizations_router, facilities_router, materials_router,
+               resources_router, requirements_router):
+    api.include_router(router)
 
 app.include_router(api)
