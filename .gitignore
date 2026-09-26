@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Local databases and uploaded files
+*.db
+*.db-journal
+*.sqlite3
+apps/backend/var/
+storage/
+
+# Node / Expo
+node_modules/
+.expo/
+dist/
+web-build/
+*.tsbuildinfo
+.metro-health-check*
+expo-env.d.ts
+apps/mobile/android/
+apps/mobile/ios/
+
+# Env and secrets — never commit real secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

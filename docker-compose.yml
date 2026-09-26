@@ -1,0 +1,98 @@
+name: symbio
+
+services:
+  db:
+    # PostgreSQL 16 with pgvector preinstalled (semantic retrieval path).
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-symbio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-symbio}
+      POSTGRES_DB: ${POSTGRES_DB:-symbio}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-symbio} -d ${POSTGRES_DB:-symbio}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./apps/backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-symbio}:${POSTGRES_PASSWORD:-symbio}@db:5432/${POSTGRES_DB:-symbio}
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_LOCAL_DIR: /data/storage
+    # Apply migrations, then serve. Seed separately: docker compose exec backend python -m app.seed
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - storage:/data/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    # Periodic jobs: listing expiry, stale-match sweeps, expiry reminders.
+    build:
+      context: ./apps/backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-symbio}:${POSTGRES_PASSWORD:-symbio}@db:5432/${POSTGRES_DB:-symbio}
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_LOCAL_DIR: /data/storage
+    command: python -m app.worker
+    volumes:
+      - storage:/data/storage
+    depends_on:
+      backend:
+        condition: service_started
+
+  admin:
+    profiles: ["admin"]
+    image: node:22-alpine
+    working_dir: /repo
+    command: sh -c "npm install && npm run dev -w @symbio/admin -- --host 0.0.0.0"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./:/repo
+      - /repo/node_modules
+
+  mobile:
+    # Expo dev server for mobile development. Scan the QR code with Expo Go.
+    profiles: ["mobile"]
+    image: node:22-alpine
+    working_dir: /repo
+    command: sh -c "npm install && npm run start -w @symbio/mobile -- --tunnel"
+    environment:
+      EXPO_PUBLIC_API_URL: ${EXPO_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./:/repo
+      - /repo/node_modules
+
+volumes:
+  pgdata:
+  storage:
