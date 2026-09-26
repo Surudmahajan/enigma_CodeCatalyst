@@ -81,7 +81,7 @@ class ProcessorSpec:
 
 @dataclass
 class PathwayResult:
-    status: str                      # VIABLE | WEAK | NOT_VIABLE
+    status: str                      # VIABLE | WEAK | INSUFFICIENT_DATA | NOT_VIABLE
     overall_score: float
     scores: dict[str, float | None]
     input_quantity: float            # tonnes/month of raw material routed to the processor
@@ -98,6 +98,37 @@ class PathwayResult:
     considerations: list[str] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
     buyer_evaluation: MatchEvaluation | None = None
+
+
+# One comparison basis for every route (direct or processed): the pathway weights above, logistics as
+# total route distance against twice the single-leg reference distance, the same negative-economics cap.
+# The stored match score uses the *matching* weights and single-leg distance decay, so it is never
+# compared with a pathway score directly (see service._recommend).
+ROUTE_BASIS = (f"{VERSION} route score: technical, quantity, capacity, logistics (total route km vs "
+               "2 × reference distance), timing, economic and environmental, weighted identically for direct and "
+               "processed routes; components that cannot be assessed are excluded on both sides.")
+
+
+def route_logistics_score(total_km: float | None, params: MatchingParameters) -> float | None:
+    if total_km is None:
+        return None
+    return round(max(0.0, 1 - total_km / (2 * params.default_max_distance_km)), 4)
+
+
+def route_score(scores: dict[str, float | None], negative_economics: bool) -> float:
+    overall = composite_score(scores, PATHWAY_WEIGHTS)
+    if negative_economics:
+        overall = min(overall, NEGATIVE_ECONOMICS_CAP)
+    return round(overall, 4)
+
+
+def direct_route_score(*, material: float | None, quantity: float | None, distance_km: float | None,
+                       timing: float | None, economic: float | None, environmental: float | None,
+                       negative_economics: bool, params: MatchingParameters) -> float:
+    """A direct (raw) sale scored on the same route basis as a processed pathway (no capacity leg)."""
+    return route_score({"technical": material, "quantity": quantity, "capacity": None,
+                        "logistics": route_logistics_score(distance_km, params), "timing": timing,
+                        "economic": economic, "environmental": environmental}, negative_economics)
 
 
 def _check_dict(ch: c.PropertyCheck) -> dict[str, Any]:
@@ -238,33 +269,44 @@ def evaluate_processed_pathway(rp: ResourceProfile, method: MethodSpec, processo
             if d1 is not None:
                 items.append(_money_item("transport_to_processor", "Transport seller → processor", -in_t * d1 * rate,
                                          label, "platform", f"{in_t:,.0f} t × {d1:,.0f} km × {rate:,.2f} {currency}/t·km"))
+            else:
+                missing.append("distance seller → processor")
             if d2 is not None:
                 items.append(_money_item("transport_to_buyer", "Transport processor → buyer", -out_t * d2 * rate,
                                          label, "platform", f"{out_t:,.0f} t × {d2:,.0f} km × {rate:,.2f} {currency}/t·km"))
+            else:
+                missing.append("distance processor → buyer")
         else:
             missing.append("transport rate")
+    # Economics are ASSESSED only when every input the pathway depends on exists: at least one benefit
+    # (buyer's avoided purchase or seller's avoided disposal), the processing cost, and transport for both
+    # legs. Otherwise they are INSUFFICIENT_DATA: no score, no net value, no direction — never invented.
     gross = sum(i["amount"] for i in items if i["amount"] > 0)
     net = sum(i["amount"] for i in items)
-    if benefits == 0 or gross <= 0:
-        economic_score, direction = None, None
-        considerations.append("Pathway value not estimated: no price or disposal-cost inputs were provided.")
+    if benefits == 0 and "common currency" not in missing:
+        missing.append("seller's disposal cost (or the buyer's current material price)")
+    economic_status = "ASSESSED" if (benefits > 0 and not missing and gross > 0) else "INSUFFICIENT_DATA"
+    if economic_status == "INSUFFICIENT_DATA":
+        economic_score, direction, gross_out, net_out = None, None, None, None
+        considerations.append("Economics not assessed — missing: " + ", ".join(missing) + ". This pathway is not "
+                              "shown as viable until these inputs exist.")
     else:
         ratio = net / gross
         economic_score = round(max(0.0, min(1.0, 0.5 + 0.5 * ratio)), 4)
         direction = "POSITIVE_POTENTIAL" if ratio > 0.1 else "NEGATIVE_POTENTIAL" if ratio < -0.1 else "UNCERTAIN"
+        gross_out, net_out = round(gross, 2), round(net, 2)
+        # Texts carry no amounts: the net could reveal a counterparty's private price (see service redaction).
         if direction == "POSITIVE_POTENTIAL":
-            strengths.append(f"Potentially economically viable: estimated net value {net:,.0f} {currency} {basis} "
-                             "after processing and transport.")
+            strengths.append("Potentially economically viable: estimated benefits exceed processing and transport costs.")
         elif direction == "NEGATIVE_POTENTIAL":
-            considerations.append(f"Known costs exceed estimated benefits by {abs(net):,.0f} {currency} {basis} — "
-                                  "mainly processing and transport.")
+            considerations.append("Known costs exceed estimated benefits — mainly processing and transport.")
         else:
             considerations.append("Estimated benefits and costs are roughly balanced; economics are uncertain.")
     if any(i["provenance"] == "Demo assumption" for i in items):
         considerations.append("Processing and/or transport costs are demo assumptions, not quotes.")
-    economics = {"version": VERSION, "currency": currency, "basis": basis, "line_items": items,
-                 "gross_benefit": round(gross, 2) if items else None, "net_value": round(net, 2) if items else None,
-                 "direction": direction, "missing_inputs": missing}
+    economics = {"version": VERSION, "status": economic_status, "currency": currency, "basis": basis,
+                 "line_items": items, "gross_benefit": gross_out, "net_value": net_out, "direction": direction,
+                 "missing_inputs": missing}
 
     # 5b. Environment (versioned factors only; unavailable if a factor is missing).
     diverted = in_t if rp.current_disposition in ("DISPOSAL", "STORAGE") else 0.0
@@ -307,7 +349,7 @@ def evaluate_processed_pathway(rp: ResourceProfile, method: MethodSpec, processo
 
     # 6. Logistics score over both legs (two legs → twice the single-leg reference distance).
     total_km = (d1 or 0) + (d2 or 0) if d1 is not None and d2 is not None else None
-    logistics_score = (max(0.0, 1 - total_km / (2 * params.default_max_distance_km)) if total_km is not None else None)
+    logistics_score = route_logistics_score(total_km, params)
     if total_km is not None and logistics_score is not None:
         route = f"≈{d1:,.0f} km to the processor + ≈{d2:,.0f} km to the buyer"
         if logistics_score >= 0.7:
@@ -329,11 +371,11 @@ def evaluate_processed_pathway(rp: ResourceProfile, method: MethodSpec, processo
         "economic": economic_score,
         "environmental": env_score,
     }
-    overall = composite_score(scores, PATHWAY_WEIGHTS)
-    if direction == "NEGATIVE_POTENTIAL":
-        overall = min(overall, NEGATIVE_ECONOMICS_CAP)
+    overall = route_score(scores, direction == "NEGATIVE_POTENTIAL")
     if blockers:
         status = "NOT_VIABLE"
+    elif economic_status == "INSUFFICIENT_DATA":
+        status = "INSUFFICIENT_DATA"  # technically possible, but viability cannot be confirmed without economics
     elif overall >= VIABLE_THRESHOLD:
         status = "VIABLE"
     elif overall >= WEAK_THRESHOLD:

@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.organizations.schemas import OrganizationPublic
 
-PathwayStatus = Literal["VIABLE", "WEAK", "NOT_VIABLE"]
+PathwayStatus = Literal["VIABLE", "WEAK", "INSUFFICIENT_DATA", "NOT_VIABLE"]
 
 
 class PathwayParty(BaseModel):
@@ -19,15 +19,35 @@ class DirectComparison(BaseModel):
     """The raw material sold straight to the same buyer, for side-by-side comparison."""
 
     eligible: bool
-    overall_score: float | None
+    overall_score: float | None = Field(description="Route score on the same basis as the processed pathway")
+    match_score: float | None = Field(description="Matching-engine score (matching weights; not comparable)")
+    economics_assessed: bool
     reason: str | None
+
+
+class ConnectionTarget(BaseModel):
+    """Who the user would connect with, about which listing, through the existing connection flow.
+
+    Only an opportunity for the *same* resource ↔ requirement pair qualifies; a pathway never borrows
+    an opportunity about a different listing.
+    """
+
+    available: bool
+    kind: Literal["DIRECT_OPPORTUNITY", "NONE"]
+    match_id: uuid.UUID | None
+    with_organization: str | None
+    about_requirement: str | None
+    relationship: str
+    reason: str
 
 
 class DirectPathway(BaseModel):
     match_id: uuid.UUID
     buyer: PathwayParty
     status: str
-    overall_score: float
+    overall_score: float = Field(description="Matching-engine score (matching weights)")
+    route_score: float = Field(description="Route score on the same basis as processed pathways")
+    economics_assessed: bool
     feasibility: str
     distance_km: float | None
     demand_coverage: float
@@ -61,7 +81,8 @@ class ProcessedPathway(BaseModel):
     blockers: list[str]
     direct_to_same_buyer: DirectComparison
     buyer_match_id: uuid.UUID | None = Field(
-        description="An existing opportunity with this buyer, through which the normal connection flow can start")
+        description="Existing opportunity for this same resource ↔ requirement pair, if any (see connection_target)")
+    connection_target: ConnectionTarget
 
 
 class Transformation(BaseModel):
@@ -78,8 +99,11 @@ class Transformation(BaseModel):
 class PathwayReport(BaseModel):
     resource_id: uuid.UUID
     resource_name: str
+    resource_status: str
+    pathways_active: bool = Field(description="False when the resource is not active; no pathways are generated")
     material: str | None
     supply: str
+    comparison_basis: str
     direct: list[DirectPathway]
     processed: list[ProcessedPathway]
     transformations: list[Transformation]

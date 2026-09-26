@@ -8133,6 +8133,76 @@
         ],
         "title": "ConnectionStatus"
       },
+      "ConnectionTarget": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "DIRECT_OPPORTUNITY",
+              "NONE"
+            ],
+            "title": "Kind"
+          },
+          "match_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Id"
+          },
+          "with_organization": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "With Organization"
+          },
+          "about_requirement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About Requirement"
+          },
+          "relationship": {
+            "type": "string",
+            "title": "Relationship"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "available",
+          "kind",
+          "match_id",
+          "with_organization",
+          "about_requirement",
+          "relationship",
+          "reason"
+        ],
+        "title": "ConnectionTarget",
+        "description": "Who the user would connect with, about which listing, through the existing connection flow.\n\nOnly an opportunity for the *same* resource \u2194 requirement pair qualifies; a pathway never borrows\nan opportunity about a different listing."
+      },
       "ConversationOut": {
         "properties": {
           "id": {
@@ -8320,7 +8390,24 @@
                 "type": "null"
               }
             ],
-            "title": "Overall Score"
+            "title": "Overall Score",
+            "description": "Route score on the same basis as the processed pathway"
+          },
+          "match_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Score",
+            "description": "Matching-engine score (matching weights; not comparable)"
+          },
+          "economics_assessed": {
+            "type": "boolean",
+            "title": "Economics Assessed"
           },
           "reason": {
             "anyOf": [
@@ -8338,6 +8425,8 @@
         "required": [
           "eligible",
           "overall_score",
+          "match_score",
+          "economics_assessed",
           "reason"
         ],
         "title": "DirectComparison",
@@ -8359,7 +8448,17 @@
           },
           "overall_score": {
             "type": "number",
-            "title": "Overall Score"
+            "title": "Overall Score",
+            "description": "Matching-engine score (matching weights)"
+          },
+          "route_score": {
+            "type": "number",
+            "title": "Route Score",
+            "description": "Route score on the same basis as processed pathways"
+          },
+          "economics_assessed": {
+            "type": "boolean",
+            "title": "Economics Assessed"
           },
           "feasibility": {
             "type": "string",
@@ -8405,6 +8504,8 @@
           "buyer",
           "status",
           "overall_score",
+          "route_score",
+          "economics_assessed",
           "feasibility",
           "distance_km",
           "demand_coverage",
@@ -12241,6 +12342,15 @@
             "type": "string",
             "title": "Resource Name"
           },
+          "resource_status": {
+            "type": "string",
+            "title": "Resource Status"
+          },
+          "pathways_active": {
+            "type": "boolean",
+            "title": "Pathways Active",
+            "description": "False when the resource is not active; no pathways are generated"
+          },
           "material": {
             "anyOf": [
               {
@@ -12255,6 +12365,10 @@
           "supply": {
             "type": "string",
             "title": "Supply"
+          },
+          "comparison_basis": {
+            "type": "string",
+            "title": "Comparison Basis"
           },
           "direct": {
             "items": {
@@ -12294,8 +12408,11 @@
         "required": [
           "resource_id",
           "resource_name",
+          "resource_status",
+          "pathways_active",
           "material",
           "supply",
+          "comparison_basis",
           "direct",
           "processed",
           "transformations",
@@ -12328,6 +12445,7 @@
             "enum": [
               "VIABLE",
               "WEAK",
+              "INSUFFICIENT_DATA",
               "NOT_VIABLE"
             ],
             "title": "Status"
@@ -12473,7 +12591,10 @@
               }
             ],
             "title": "Buyer Match Id",
-            "description": "An existing opportunity with this buyer, through which the normal connection flow can start"
+            "description": "Existing opportunity for this same resource \u2194 requirement pair, if any (see connection_target)"
+          },
+          "connection_target": {
+            "$ref": "#/components/schemas/ConnectionTarget"
           }
         },
         "type": "object",
@@ -12501,7 +12622,8 @@
           "considerations",
           "blockers",
           "direct_to_same_buyer",
-          "buyer_match_id"
+          "buyer_match_id",
+          "connection_target"
         ],
         "title": "ProcessedPathway"
       },

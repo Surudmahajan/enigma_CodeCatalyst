@@ -2098,6 +2098,32 @@ export interface components {
          * @enum {string}
          */
         ConnectionStatus: "PENDING" | "ACCEPTED" | "REJECTED" | "REVOKED" | "EXPIRED";
+        /**
+         * ConnectionTarget
+         * @description Who the user would connect with, about which listing, through the existing connection flow.
+         *
+         *     Only an opportunity for the *same* resource ↔ requirement pair qualifies; a pathway never borrows
+         *     an opportunity about a different listing.
+         */
+        ConnectionTarget: {
+            /** Available */
+            available: boolean;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "DIRECT_OPPORTUNITY" | "NONE";
+            /** Match Id */
+            match_id: string | null;
+            /** With Organization */
+            with_organization: string | null;
+            /** About Requirement */
+            about_requirement: string | null;
+            /** Relationship */
+            relationship: string;
+            /** Reason */
+            reason: string;
+        };
         /** ConversationOut */
         ConversationOut: {
             /**
@@ -2174,8 +2200,18 @@ export interface components {
         DirectComparison: {
             /** Eligible */
             eligible: boolean;
-            /** Overall Score */
+            /**
+             * Overall Score
+             * @description Route score on the same basis as the processed pathway
+             */
             overall_score: number | null;
+            /**
+             * Match Score
+             * @description Matching-engine score (matching weights; not comparable)
+             */
+            match_score: number | null;
+            /** Economics Assessed */
+            economics_assessed: boolean;
             /** Reason */
             reason: string | null;
         };
@@ -2189,8 +2225,18 @@ export interface components {
             buyer: components["schemas"]["PathwayParty"];
             /** Status */
             status: string;
-            /** Overall Score */
+            /**
+             * Overall Score
+             * @description Matching-engine score (matching weights)
+             */
             overall_score: number;
+            /**
+             * Route Score
+             * @description Route score on the same basis as processed pathways
+             */
+            route_score: number;
+            /** Economics Assessed */
+            economics_assessed: boolean;
             /** Feasibility */
             feasibility: string;
             /** Distance Km */
@@ -3505,10 +3551,19 @@ export interface components {
             resource_id: string;
             /** Resource Name */
             resource_name: string;
+            /** Resource Status */
+            resource_status: string;
+            /**
+             * Pathways Active
+             * @description False when the resource is not active; no pathways are generated
+             */
+            pathways_active: boolean;
             /** Material */
             material: string | null;
             /** Supply */
             supply: string;
+            /** Comparison Basis */
+            comparison_basis: string;
             /** Direct */
             direct: components["schemas"]["DirectPathway"][];
             /** Processed */
@@ -3535,7 +3590,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "VIABLE" | "WEAK" | "NOT_VIABLE";
+            status: "VIABLE" | "WEAK" | "INSUFFICIENT_DATA" | "NOT_VIABLE";
             /** Overall Score */
             overall_score: number;
             /** Scores */
@@ -3594,9 +3649,10 @@ export interface components {
             direct_to_same_buyer: components["schemas"]["DirectComparison"];
             /**
              * Buyer Match Id
-             * @description An existing opportunity with this buyer, through which the normal connection flow can start
+             * @description Existing opportunity for this same resource ↔ requirement pair, if any (see connection_target)
              */
             buyer_match_id: string | null;
+            connection_target: components["schemas"]["ConnectionTarget"];
         };
         /** ProcessingMethodOut */
         ProcessingMethodOut: {

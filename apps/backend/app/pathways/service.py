@@ -1,5 +1,6 @@
 """Builds the direct-vs-processed pathway report for one of the caller's resources."""
 
+import copy
 import uuid
 
 from sqlalchemy import or_, select
@@ -12,19 +13,20 @@ from app.core.errors import ConflictError, NotFoundError, ValidationFailedError
 from app.core.time import today_utc
 from app.matching import components as c
 from app.matching.engine import evaluate_pair
-from app.matching.lifecycle import CLOSED_STATES
+from app.matching.lifecycle import CLOSED_STATES, CONNECTED_STATES
 from app.matching.models import Match
 from app.matching.profiles import _application_rules, _property_index, build_requirement_profile, build_resource_profile
 from app.matching.service import active_parameters, resolve_factors
 from app.matching.types import ConstraintSpec, GeoPoint, MeasuredValue
 from app.organizations import service as orgs
-from app.organizations.models import Organization, OrganizationStatus
+from app.organizations.models import Facility, FacilityStatus, Organization, OrganizationStatus
 from app.organizations.permissions import Permission
 from app.organizations.schemas import OrganizationPublic
 from app.pathways import engine
 from app.pathways.models import ProcessingMethod, ProcessorCapability
 from app.pathways.schemas import (
     CapabilityIn,
+    ConnectionTarget,
     DirectComparison,
     DirectPathway,
     PathwayParty,
@@ -85,35 +87,114 @@ def _input_status(rp, spec: engine.MethodSpec) -> str:
     return "COMPATIBLE"
 
 
+def _inactive_reason(resource, today) -> str | None:
+    """Pathways are only generated for listings that are actually on offer (same rule as direct matching)."""
+    if resource.status != ListingStatus.ACTIVE:
+        return (f"This resource is {resource.status.value.lower()}, so no pathways are generated. "
+                "Reactivate it to discover buyers and processing pathways.")
+    if resource.availability_end is not None and resource.availability_end < today:
+        return (f"This resource's availability ended on {resource.availability_end.isoformat()}, so no pathways "
+                "are generated. Update its dates to discover buyers and processing pathways.")
+    if not resource.organization.is_active:
+        return "Your organization is suspended, so no pathways are generated."
+    return None
+
+
+def redact_economics(economics: dict, visible_parties: set[str]) -> dict:
+    """Hide counterparty-provided amounts from the viewer — the same rule as direct-match views.
+
+    Line items provided by a party the viewer is not connected with lose their amount and formula,
+    and totals from which they could be back-calculated are withheld. Demo assumptions and platform
+    assumptions are not private and stay visible.
+    """
+    redacted = copy.deepcopy(economics)
+    hidden = False
+    for item in redacted["line_items"]:
+        if item["provenance"] == "Demo assumption" or item["provided_by"] in visible_parties:
+            continue
+        item["amount"], item["formula"], item["hidden"] = None, None, True
+        hidden = True
+    if hidden:
+        redacted["gross_benefit"] = redacted["net_value"] = None
+        redacted["hidden_note"] = ("Some inputs belong to organizations you are not connected with; their amounts "
+                                   "and the resulting totals are withheld. The assessment still uses them.")
+    return redacted
+
+
+def _connection_target(match_id, requirement: Requirement, processed_route: bool) -> ConnectionTarget:
+    buyer = requirement.organization.display_name
+    if match_id is not None:
+        return ConnectionTarget(
+            available=True, kind="DIRECT_OPPORTUNITY", match_id=match_id, with_organization=buyer,
+            about_requirement=requirement.name,
+            relationship=f"Seller ↔ Buyer ({buyer}) on the existing opportunity for “{requirement.name}”",
+            reason=("Connect with the buyer on the opportunity for this same requirement. Agreeing on processing "
+                    "with the processor is arranged outside the platform for now." if processed_route
+                    else "Connect with the buyer on the opportunity for this requirement."))
+    return ConnectionTarget(
+        available=False, kind="NONE", match_id=None, with_organization=None, about_requirement=requirement.name,
+        relationship=f"Seller → Processor → Buyer ({buyer})",
+        reason=(f"No opportunity exists between this raw resource and {buyer}'s requirement “{requirement.name}” "
+                "(the raw material does not meet it directly), so there is nothing to connect on yet. Connecting "
+                "with processors or on processed-material pathways is not supported yet."))
+
+
 def build_report(db: Session, ctx: OrgContext, resource_id: uuid.UUID) -> PathwayReport:
     resource = resources.get_owned(db, ctx, resource_id)
-    rp = build_resource_profile(db, resource)
     params = active_parameters(db)
     today = today_utc()
     props = _property_index(db)
     supply = f"{float(resource.quantity_available):,.0f} {resource.unit.value}/{resource.frequency.value.lower()}"
-
-    # Direct pathways: the existing matching engine's opportunities for this resource.
-    matches = list(db.scalars(select(Match).where(Match.resource_id == resource.id, Match.status.not_in(CLOSED_STATES))
-                              .order_by(Match.overall_score.desc())))
-    direct = [DirectPathway(
-        match_id=m.id, buyer=_party(m.demander_org, m.requirement_id, m.requirement.name), status=m.status.value,
-        overall_score=m.overall_score, feasibility=m.feasibility.value,
-        distance_km=float(m.distance_km) if m.distance_km is not None else None, demand_coverage=m.demand_coverage,
-        match_type=m.match_type.value, strengths=(m.explanation or {}).get("strengths", [])[:4],
-        considerations=(m.explanation or {}).get("considerations", [])[:4],
-    ) for m in matches]
-    match_by_buyer_org = {}
-    for m in matches:
-        match_by_buyer_org.setdefault(m.demander_org_id, m.id)
+    rp = build_resource_profile(db, resource)
 
     methods = [] if resource.material_id is None else list(db.scalars(select(ProcessingMethod).where(
         ProcessingMethod.input_material_id == resource.material_id, ProcessingMethod.is_active.is_(True))))
     specs = {m.id: _method_spec(db, m, props) for m in methods}
+    # Unavailable processors are excluded: inactive capability, suspended organization, inactive facility.
     capabilities = list(db.scalars(
-        select(ProcessorCapability).join(Organization, ProcessorCapability.organization_id == Organization.id)
+        select(ProcessorCapability)
+        .join(Organization, ProcessorCapability.organization_id == Organization.id)
+        .join(Facility, ProcessorCapability.facility_id == Facility.id)
         .where(ProcessorCapability.method_id.in_([m.id for m in methods]), ProcessorCapability.is_active.is_(True),
-               Organization.status == OrganizationStatus.ACTIVE))) if methods else []
+               Organization.status == OrganizationStatus.ACTIVE, Facility.status == FacilityStatus.ACTIVE)
+    )) if methods else []
+    transformations = [Transformation(
+        method_key=s.key, method_name=s.name, steps=list(s.steps), output_material=s.output_material_name,
+        expected_yield=s.expected_yield, processing_time_days=s.processing_time_days, input_status=_input_status(rp, s),
+        processors_found=sum(1 for cap in capabilities if cap.method_id == mid),
+    ) for mid, s in specs.items()]
+
+    common = dict(resource_id=resource.id, resource_name=resource.name, resource_status=resource.status.value,
+                  material=resource.material.canonical_name if resource.material else None, supply=supply,
+                  comparison_basis=engine.ROUTE_BASIS, transformations=transformations, version=engine.VERSION,
+                  disclaimer=DISCLAIMER)
+    inactive = _inactive_reason(resource, today)
+    if inactive:
+        return PathwayReport(**common, pathways_active=False, direct=[], processed=[], recommendation=inactive)
+
+    # Direct pathways: the existing matching engine's opportunities for this resource.
+    matches = list(db.scalars(select(Match).where(Match.resource_id == resource.id, Match.status.not_in(CLOSED_STATES))
+                              .order_by(Match.overall_score.desc())))
+    direct = []
+    for m in matches:
+        econ = (m.assessment_snapshot or {}).get("economic") or {}
+        direct.append(DirectPathway(
+            match_id=m.id, buyer=_party(m.demander_org, m.requirement_id, m.requirement.name), status=m.status.value,
+            overall_score=m.overall_score,
+            route_score=engine.direct_route_score(
+                material=m.material_score, quantity=m.quantity_score,
+                distance_km=float(m.distance_km) if m.distance_km is not None else None, timing=m.timing_score,
+                economic=m.economic_score, environmental=m.environmental_score,
+                negative_economics=econ.get("direction") == "NEGATIVE_POTENTIAL", params=params),
+            economics_assessed=m.economic_score is not None, feasibility=m.feasibility.value,
+            distance_km=float(m.distance_km) if m.distance_km is not None else None, demand_coverage=m.demand_coverage,
+            match_type=m.match_type.value, strengths=(m.explanation or {}).get("strengths", [])[:4],
+            considerations=(m.explanation or {}).get("considerations", [])[:4],
+        ))
+    # Only an opportunity for the SAME resource ↔ requirement pair is a legitimate connection target.
+    match_by_requirement = {m.requirement_id: m for m in matches}
+    connected_requirements = {m.requirement_id for m in matches if m.status in CONNECTED_STATES}
+
     requirements = list(db.scalars(select(Requirement).join(Organization, Requirement.organization_id == Organization.id).where(
         Requirement.status == ListingStatus.ACTIVE, Requirement.organization_id != resource.organization_id,
         Organization.status == OrganizationStatus.ACTIVE,
@@ -129,14 +210,26 @@ def build_report(db: Session, ctx: OrgContext, resource_id: uuid.UUID) -> Pathwa
                 factors = resolve_factors(db, rp, qp, requirement.intended_application_id)
                 d = evaluate_pair(rp, qp, params, factors, today)
                 reason = None if d.eligible else (d.failures[0].message if d.failures else "Not compatible.")
+                route = None
+                if d.eligible:
+                    route = engine.direct_route_score(
+                        material=d.scores.get("material"), quantity=d.scores.get("quantity"),
+                        distance_km=d.location.distance_km if d.location else None, timing=d.scores.get("timing"),
+                        economic=d.scores.get("economic"), environmental=d.scores.get("environmental"),
+                        negative_economics=bool(d.economic and d.economic.direction
+                                                and d.economic.direction.value == "NEGATIVE_POTENTIAL"),
+                        params=params)
                 qp_cache[requirement.id] = (qp, factors)
                 direct_cache[requirement.id] = DirectComparison(
-                    eligible=d.eligible, overall_score=d.overall_score if d.scores else None, reason=reason)
+                    eligible=d.eligible, overall_score=route, match_score=d.overall_score if d.eligible else None,
+                    economics_assessed=d.eligible and d.scores.get("economic") is not None, reason=reason)
             qp, factors = qp_cache[requirement.id]
             result = engine.evaluate_processed_pathway(rp, spec, proc, qp, params, factors, today)
             if result is None:
                 continue
             buyer_wants = "PROCESSED" if requirement.material is not None and requirement.material.is_processed else "RAW"
+            visible = {"seller", "platform"} | ({"buyer"} if requirement.id in connected_requirements else set())
+            same_pair = match_by_requirement.get(requirement.id)
             processed.append(ProcessedPathway(
                 id=f"{cap.id}:{requirement.id}", status=result.status, overall_score=result.overall_score,
                 scores=result.scores,
@@ -153,43 +246,41 @@ def build_report(db: Session, ctx: OrgContext, resource_id: uuid.UUID) -> Pathwa
                 input_quantity_t=result.input_quantity, output_quantity_t=result.output_quantity, basis=result.basis,
                 distance_to_processor_km=result.distance_to_processor_km,
                 distance_to_buyer_km=result.distance_to_buyer_km, capacity_status=result.capacity_status,
-                economics=result.economics, environment=result.environment, input_checks=result.input_checks,
-                output_checks=result.output_checks, strengths=result.strengths, considerations=result.considerations,
-                blockers=result.blockers, direct_to_same_buyer=direct_cache[requirement.id],
-                buyer_match_id=match_by_buyer_org.get(requirement.organization_id),
+                economics=redact_economics(result.economics, visible), environment=result.environment,
+                input_checks=result.input_checks, output_checks=result.output_checks, strengths=result.strengths,
+                considerations=result.considerations, blockers=result.blockers,
+                direct_to_same_buyer=direct_cache[requirement.id],
+                buyer_match_id=same_pair.id if same_pair else None,
+                connection_target=_connection_target(same_pair.id if same_pair else None, requirement, True),
             ))
-    order = {"VIABLE": 0, "WEAK": 1, "NOT_VIABLE": 2}
+    order = {"VIABLE": 0, "WEAK": 1, "INSUFFICIENT_DATA": 2, "NOT_VIABLE": 3}
     processed.sort(key=lambda p: (order[p.status], -p.overall_score))
 
-    transformations = [Transformation(
-        method_key=s.key, method_name=s.name, steps=list(s.steps), output_material=s.output_material_name,
-        expected_yield=s.expected_yield, processing_time_days=s.processing_time_days, input_status=_input_status(rp, s),
-        processors_found=sum(1 for cap in capabilities if cap.method_id == mid),
-    ) for mid, s in specs.items()]
-
-    return PathwayReport(
-        resource_id=resource.id, resource_name=resource.name,
-        material=resource.material.canonical_name if resource.material else None, supply=supply, direct=direct,
-        processed=processed[:12], transformations=transformations,
-        recommendation=_recommend(direct, processed, transformations), version=engine.VERSION, disclaimer=DISCLAIMER,
-    )
+    return PathwayReport(**common, pathways_active=True, direct=direct, processed=processed[:12],
+                         recommendation=_recommend(direct, processed, transformations))
 
 
 def _recommend(direct: list[DirectPathway], processed: list[ProcessedPathway], transformations) -> str:
-    best_direct = max(direct, key=lambda d: d.overall_score, default=None)
+    """Compare routes on ONE basis: both sides use the route score (see engine.ROUTE_BASIS),
+    never the matching score against a pathway score."""
+    best_direct = max(direct, key=lambda d: d.route_score, default=None)
     viable = [p for p in processed if p.status == "VIABLE"]
-    best_processed = viable[0] if viable else None
-    if best_processed and (best_direct is None or best_processed.overall_score > best_direct.overall_score):
+    best_processed = max(viable, key=lambda p: p.overall_score, default=None)
+    caveat = (" Direct economics were not assessed (missing price inputs), so that comparison is incomplete."
+              if best_direct is not None and not best_direct.economics_assessed else "")
+    if best_processed and (best_direct is None or best_processed.overall_score > best_direct.route_score):
         return (f"Processing looks worth evaluating: {best_processed.processor.organization.display_name} → "
-                f"{best_processed.buyer.organization.display_name} scores {best_processed.overall_score:.0%}"
-                + (f" vs {best_direct.overall_score:.0%} for the best direct sale." if best_direct
-                   else ", and no direct buyer was found."))
+                f"{best_processed.buyer.organization.display_name} has a route score of "
+                f"{best_processed.overall_score:.0%}"
+                + (f" vs {best_direct.route_score:.0%} for the best direct sale ({best_direct.buyer.organization.display_name}),"
+                   " on the same route basis." if best_direct else ", and no direct buyer was found.") + caveat)
     if best_direct and best_processed:
-        return (f"Direct sale to {best_direct.buyer.organization.display_name} ({best_direct.overall_score:.0%}) remains "
-                f"stronger than the best processing pathway ({best_processed.overall_score:.0%}).")
+        return (f"Direct sale to {best_direct.buyer.organization.display_name} (route score {best_direct.route_score:.0%}) "
+                f"remains stronger than the best processing pathway ({best_processed.overall_score:.0%}), on the same "
+                "route basis." + caveat)
     if best_direct:
-        return (f"Sell as-is: direct sale to {best_direct.buyer.organization.display_name} scores "
-                f"{best_direct.overall_score:.0%}; no viable processing pathway was found.")
+        return (f"Sell as-is: direct sale to {best_direct.buyer.organization.display_name} has a route score of "
+                f"{best_direct.route_score:.0%}; no viable processing pathway was found." + caveat)
     if not transformations:
         return "No direct buyer and no known processing method for this material yet."
     return "No viable pathway yet: processing methods exist, but no processor/buyer combination is currently feasible."

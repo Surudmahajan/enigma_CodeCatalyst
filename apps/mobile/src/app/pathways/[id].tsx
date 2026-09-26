@@ -11,8 +11,8 @@ import { formatMoney, formatNumber, percent } from '@/lib/format';
 import { usePathways } from '@/lib/queries';
 import { fontSize, radius, spacing, useColors } from '@/theme';
 
-const STATUS_TONE = { VIABLE: 'accent', WEAK: 'warning', NOT_VIABLE: 'danger' } as const;
-const STATUS_LABEL = { VIABLE: 'Viable pathway', WEAK: 'Weak pathway', NOT_VIABLE: 'Not viable' } as const;
+const STATUS_TONE = { VIABLE: 'accent', WEAK: 'warning', INSUFFICIENT_DATA: 'warning', NOT_VIABLE: 'danger' } as const;
+const STATUS_LABEL = { VIABLE: 'Viable pathway', WEAK: 'Weak pathway', INSUFFICIENT_DATA: 'Economics not assessed', NOT_VIABLE: 'Not viable' } as const;
 const SCORE_LABELS: Record<string, string> = { technical: 'Technical', quantity: 'Quantity', capacity: 'Processor capacity',
   logistics: 'Logistics (both legs)', timing: 'Timing', economic: 'Economic', environmental: 'Environmental' };
 
@@ -31,8 +31,9 @@ export default function Pathways() {
         {data ? (
           <>
             <Title sub={`${data.material ?? 'Unclassified'} · ${data.supply}`}>{data.resource_name}</Title>
-            <Notice tone="accent" icon="bulb-outline">{data.recommendation}</Notice>
+            <Notice tone={data.pathways_active ? 'accent' : 'warning'} icon="bulb-outline">{data.recommendation}</Notice>
 
+            {data.pathways_active ? (<>
             <SectionHeader title="Pathway A · Sell as-is" />
             {data.direct.length ? data.direct.map((d) => <DirectCard key={d.match_id} d={d} />) : (
               <Card>
@@ -49,6 +50,7 @@ export default function Pathways() {
                 message={data.transformations.length ? 'Processing methods exist for this material, but no processor/buyer combination is available right now.'
                   : 'No processing method is known for this material yet.'} />
             )}
+            </>) : null}
 
             {data.transformations.length ? (
               <>
@@ -79,11 +81,11 @@ function DirectCard({ d }: { d: DirectPathway }) {
   return (
     <Card onPress={() => router.push(`/match/${d.match_id}`)} accessibilityLabel={`Direct sale to ${d.buyer.organization.display_name}`}>
       <View style={{ flexDirection: 'row', gap: spacing.md, alignItems: 'center' }}>
-        <ScoreRing score={d.overall_score} size={52} />
+        <ScoreRing score={d.route_score} size={52} />
         <View style={{ flex: 1 }}>
           <Text style={{ color: c.text, fontWeight: '700', fontSize: fontSize.md }} numberOfLines={1}>{d.buyer.organization.display_name}</Text>
           <Body muted>{d.buyer.listing_name}</Body>
-          <Body muted>{d.distance_km !== null && d.distance_km !== undefined ? `${Math.round(d.distance_km)} km · ` : ''}{percent(d.demand_coverage)} of demand · {d.feasibility.toLowerCase()} feasibility</Body>
+          <Body muted>{d.distance_km !== null && d.distance_km !== undefined ? `${Math.round(d.distance_km)} km · ` : ''}{percent(d.demand_coverage)} of demand · route score (same basis as processing)</Body>
         </View>
         <Ionicons name="chevron-forward" size={18} color={c.textMuted} />
       </View>
@@ -96,7 +98,8 @@ function ProcessedCard({ p, defaultOpen }: { p: ProcessedPathway; defaultOpen: b
   const seller = useMembership()?.organization_name ?? 'You';
   const [open, setOpen] = useState(defaultOpen);
   const economics = p.economics as { currency: string; basis: string; net_value: number | null; direction: string | null;
-    line_items: { key: string; label: string; amount: number; provenance: string; formula: string }[]; missing_inputs: string[] };
+    line_items: { key: string; label: string; amount: number | null; provenance: string; formula: string | null; hidden?: boolean }[];
+    missing_inputs: string[]; hidden_note?: string };
   const env = p.environment as { waste_diverted_t: number; virgin_material_avoided_t: number; net_benefit_kgco2e: number | null; uses_demo_factors: boolean };
   const method = p.method as { name: string; steps: string[]; output_material: string; expected_yield: number;
     processing_time_days: number; output_specification: Record<string, number>; output_specification_label: string };
@@ -153,11 +156,12 @@ function ProcessedCard({ p, defaultOpen }: { p: ProcessedPathway; defaultOpen: b
           <SectionHeader title={`Pathway economics (${economics.basis})`} />
           {economics.line_items.map((li) => (
             <View key={li.key} style={{ marginBottom: spacing.xs }}>
-              <KeyValue label={li.label} value={formatMoney(li.amount, economics.currency)} />
-              <Text style={{ color: c.textMuted, fontSize: fontSize.xs }}>{li.provenance} · {li.formula}</Text>
+              <KeyValue label={li.label} value={li.hidden ? 'Visible after connecting' : formatMoney(li.amount, economics.currency)} />
+              <Text style={{ color: c.textMuted, fontSize: fontSize.xs }}>{li.provenance}{li.formula ? ` · ${li.formula}` : ''}</Text>
             </View>
           ))}
           {economics.net_value !== null ? <KeyValue label="Estimated net value" value={formatMoney(economics.net_value, economics.currency)} /> : null}
+          {economics.hidden_note ? <Body muted>{economics.hidden_note}</Body> : null}
           {economics.missing_inputs.length ? <Body muted>Missing: {economics.missing_inputs.join(', ')}</Body> : null}
 
           <SectionHeader title="Output specification" />
@@ -171,11 +175,15 @@ function ProcessedCard({ p, defaultOpen }: { p: ProcessedPathway; defaultOpen: b
           {env.uses_demo_factors ? <Body muted style={{ fontSize: fontSize.xs }}>Uses illustrative demo emission factors.</Body> : null}
 
           <View style={{ marginTop: spacing.md }}>
-            {p.buyer_match_id ? (
-              <Button title={`Open opportunity with ${p.buyer.organization.display_name}`} icon="person-add-outline" variant="secondary"
-                onPress={() => router.push(`/match/${p.buyer_match_id}`)} />
+            {p.connection_target.available && p.connection_target.match_id ? (
+              <>
+                <Body muted>{p.connection_target.relationship}</Body>
+                <Button title={`Open opportunity with ${p.connection_target.with_organization}`} icon="person-add-outline" variant="secondary"
+                  onPress={() => router.push(`/match/${p.connection_target.match_id}`)} />
+                <Body muted style={{ fontSize: fontSize.xs }}>{p.connection_target.reason}</Body>
+              </>
             ) : (
-              <Notice>Contact goes through the existing connection flow on an opportunity. Connecting directly with processors is on the roadmap.</Notice>
+              <Notice>{p.connection_target.reason}</Notice>
             )}
           </View>
         </>
