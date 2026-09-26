@@ -6,6 +6,7 @@ from app.auth.models import RefreshToken, UserToken  # noqa: F401
 from app.connections.models import Connection  # noqa: F401
 from app.documents.models import Document  # noqa: F401
 from app.exchanges.models import Exchange  # noqa: F401
+from app.impact.models import ImpactRecord  # noqa: F401
 from app.materials.models import (  # noqa: F401
     ApplicationType,
     Material,

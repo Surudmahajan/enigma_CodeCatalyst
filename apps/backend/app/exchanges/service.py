@@ -124,6 +124,7 @@ def update_terms(db: Session, ctx: OrgContext, exchange_id: uuid.UUID, data: Exc
 def change_status(db: Session, ctx: OrgContext, exchange_id: uuid.UUID, target: ExchangeStatus,
                   reason: str | None = None, delivered_quantity: Decimal | None = None) -> Exchange:
     ctx.require(Permission.MANAGE_EXCHANGES)
+    target = ExchangeStatus(target)
     exchange = get_for_org(db, ctx, exchange_id)
     previous = exchange.status
     EXCHANGE_LIFECYCLE.assert_transition(previous, target)

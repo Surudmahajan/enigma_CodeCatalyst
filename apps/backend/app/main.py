@@ -6,6 +6,8 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import models as _models  # noqa: F401  (registers every ORM model)
+from app.admin.router import router as admin_router
+from app.analytics.router import router as analytics_router
 from app.auth.router import router as auth_router
 from app.connections.router import router as connections_router
 from app.core import jobs
@@ -14,6 +16,7 @@ from app.core.errors import register_error_handlers
 from app.core.logging import RequestContextMiddleware, configure_logging
 from app.documents.router import router as documents_router
 from app.exchanges.router import router as exchanges_router
+from app.impact import handlers as impact_handlers
 from app.materials.router import router as materials_router
 from app.matching import handlers as matching_handlers
 from app.matching.router import router as matching_router
@@ -29,6 +32,7 @@ from app.users.router import router as users_router
 settings = get_settings()
 matching_handlers.register()
 notification_handlers.register()
+impact_handlers.register()
 
 
 @asynccontextmanager
@@ -70,7 +74,7 @@ def health() -> dict[str, str]:
 
 for router in (auth_router, users_router, organizations_router, facilities_router, materials_router,
                resources_router, requirements_router, matching_router, connections_router, messaging_router,
-               documents_router, exchanges_router, notifications_router):
+               documents_router, exchanges_router, notifications_router, analytics_router, admin_router):
     api.include_router(router)
 
 app.include_router(api)

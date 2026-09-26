@@ -7,7 +7,7 @@ from app.users.schemas import UserOut
 _PASSWORD_RULES = "at least 10 characters, including a letter and a number"
 
 
-def _check_password(value: str) -> str:
+def check_password_strength(value: str) -> str:
     if len(value) < 10 or not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
         raise ValueError(f"Password must be {_PASSWORD_RULES}.")
     return value
@@ -20,7 +20,7 @@ class RegisterRequest(BaseModel):
     last_name: str = Field(min_length=1, max_length=100)
     phone: str | None = Field(default=None, max_length=32)
 
-    _password = field_validator("password")(_check_password)
+    _password = field_validator("password")(check_password_strength)
 
 
 class LoginRequest(BaseModel):
@@ -51,7 +51,7 @@ class PasswordResetConfirm(BaseModel):
     token: str = Field(min_length=10, max_length=200)
     new_password: str = Field(min_length=10, max_length=128)
 
-    _password = field_validator("new_password")(_check_password)
+    _password = field_validator("new_password")(check_password_strength)
 
 
 class VerifyEmailRequest(BaseModel):
