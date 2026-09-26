@@ -27,7 +27,7 @@ PASSWORD = "Test-password-123"
 _counter = itertools.count(1)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def fresh_database():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
@@ -35,7 +35,7 @@ def fresh_database():
 
 
 @pytest.fixture
-def db():
+def db(fresh_database):
     session = SessionLocal()
     try:
         yield session
@@ -44,7 +44,7 @@ def db():
 
 
 @pytest.fixture
-def client():
+def client(fresh_database):
     return TestClient(app)
 
 
@@ -109,9 +109,12 @@ def kb(db):
     from sqlalchemy import select
 
     from app.materials.models import ApplicationType, Material
+    from app.seed.configuration import seed_demo_emission_factors, seed_matching_config
     from app.seed.knowledge_base import seed_knowledge_base
 
     seed_knowledge_base(db)
+    seed_matching_config(db)
+    seed_demo_emission_factors(db)
 
     class KB:
         def material(self, name: str) -> str:

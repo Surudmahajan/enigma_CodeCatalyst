@@ -12,6 +12,8 @@ from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.core.logging import RequestContextMiddleware, configure_logging
 from app.materials.router import router as materials_router
+from app.matching import handlers as matching_handlers
+from app.matching.router import router as matching_router
 from app.organizations.router import facilities_router
 from app.organizations.router import router as organizations_router
 from app.requirements.router import router as requirements_router
@@ -19,6 +21,7 @@ from app.resources.router import router as resources_router
 from app.users.router import router as users_router
 
 settings = get_settings()
+matching_handlers.register()
 
 
 @asynccontextmanager
@@ -59,7 +62,7 @@ def health() -> dict[str, str]:
 
 
 for router in (auth_router, users_router, organizations_router, facilities_router, materials_router,
-               resources_router, requirements_router):
+               resources_router, requirements_router, matching_router):
     api.include_router(router)
 
 app.include_router(api)
