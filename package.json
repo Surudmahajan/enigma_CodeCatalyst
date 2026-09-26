@@ -1,0 +1,17 @@
+{
+  "name": "symbio",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SYMBIO — turning industrial by-products into industrial resources",
+  "workspaces": [
+    "apps/mobile",
+    "apps/admin",
+    "packages/*"
+  ],
+  "scripts": {
+    "gen:types": "npm run generate -w @symbio/shared-types",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "mobile": "npm run start -w @symbio/mobile",
+    "admin": "npm run dev -w @symbio/admin"
+  }
+}

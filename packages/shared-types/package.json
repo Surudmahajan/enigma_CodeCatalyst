@@ -1,0 +1,15 @@
+{
+  "name": "@symbio/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript API contract generated from the SYMBIO backend OpenAPI schema",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "generate": "cd ../../apps/backend && (.venv/Scripts/python scripts/export_openapi.py || python scripts/export_openapi.py) && cd ../../packages/shared-types && npx --yes openapi-typescript@7.13.0 openapi.json -o src/api.d.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3"
+  }
+}

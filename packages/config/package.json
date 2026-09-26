@@ -1,0 +1,10 @@
+{
+  "name": "@symbio/config",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SYMBIO brand tokens and shared client constants",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": { "typecheck": "tsc --noEmit -p ." },
+  "devDependencies": { "typescript": "~6.0.3" }
+}
