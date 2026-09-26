@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     ai_provider: Literal["none", "anthropic"] = "none"
     ai_api_key: str | None = None
-    ai_model: str = "claude-sonnet-5"
+    ai_model: str = "claude-opus-5"
     embedding_provider: Literal["local", "openai_compatible"] = "local"
     embedding_api_url: str | None = None
     embedding_model: str | None = None

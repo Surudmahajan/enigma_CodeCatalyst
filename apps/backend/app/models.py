@@ -1,5 +1,6 @@
 """Imports every ORM model so metadata is complete (Alembic, create_all, relationships)."""
 
+from app.ai.models import AIOutputLog  # noqa: F401
 from app.assessment.models import EmissionFactor  # noqa: F401
 from app.audit.models import AuditLog  # noqa: F401
 from app.auth.models import RefreshToken, UserToken  # noqa: F401

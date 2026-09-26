@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import models as _models  # noqa: F401  (registers every ORM model)
 from app.admin.router import router as admin_router
+from app.ai.router import router as ai_router
 from app.analytics.router import router as analytics_router
 from app.auth.router import router as auth_router
 from app.connections.router import router as connections_router
@@ -74,7 +75,8 @@ def health() -> dict[str, str]:
 
 for router in (auth_router, users_router, organizations_router, facilities_router, materials_router,
                resources_router, requirements_router, matching_router, connections_router, messaging_router,
-               documents_router, exchanges_router, notifications_router, analytics_router, admin_router):
+               documents_router, exchanges_router, notifications_router, analytics_router, admin_router,
+               ai_router):
     api.include_router(router)
 
 app.include_router(api)
