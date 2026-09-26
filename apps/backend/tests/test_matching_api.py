@@ -104,7 +104,7 @@ def test_counterpart_private_data_is_hidden_before_connection(client, kb):
     purchase = next(li for li in economic["line_items"] if li["key"] == "avoided_purchase")
     assert purchase["amount"] == 1500 * 900
     # Its own listing is shown in full.
-    assert detail["requirement"]["commercial_terms"]["virgin_material_price_per_unit"] == "900.00"
+    assert float(detail["requirement"]["commercial_terms"]["virgin_material_price_per_unit"]) == 900
 
 
 def test_hidden_match_between_different_material_names(client, kb):

@@ -3,6 +3,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 
+from app.connections.service import connection_context_for
 from app.core.dependencies import DB, Org
 from app.core.rate_limit import rate_limit
 from app.matching import service, views
@@ -13,7 +14,8 @@ router = APIRouter(prefix="/matches", tags=["matching"])
 
 
 def detail(db, match, ctx) -> MatchDetail:
-    return views.to_detail(db, match, ctx)
+    connection, exchange_id = connection_context_for(db, match, ctx)
+    return views.to_detail(db, match, ctx, connection, exchange_id)
 
 
 @router.get("", response_model=list[MatchSummary], summary="Opportunities for your organization")

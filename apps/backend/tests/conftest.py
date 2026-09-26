@@ -27,10 +27,22 @@ PASSWORD = "Test-password-123"
 _counter = itertools.count(1)
 
 
-@pytest.fixture
-def fresh_database():
+@pytest.fixture(scope="session")
+def _schema():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
+    yield
+
+
+@pytest.fixture
+def fresh_database(_schema):
+    """Empty every table (children first) — much faster than recreating the schema."""
+    from app.core.rate_limit import limiter
+
+    with engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            conn.execute(table.delete())
+    limiter.reset()
     yield
 
 
